@@ -213,6 +213,20 @@ def settings_page() -> None:
                     fields[tool.key].set_value(settings.path_for(tool) or "")  # also refreshes each source label
                 ui.notify("Settings saved", type="positive")
 
+            with ui.column().classes("gap-1"):
+                ui.label("APP DATA").style(f"color:{theme.TEXT_MUTED}; font-size:0.75rem; letter-spacing:0.05em")
+                ui.label(
+                    "Settings and the recent-repositories list live in the data folder; converted scores and "
+                    "computed diffs are cached in the cache folder."
+                ).style(f"color:{theme.TEXT_SECONDARY}; font-size:0.85rem")
+            with ui.row().classes("gap-2"):
+                ui.button("Open data folder", icon="folder_open", on_click=lambda: dialogs.open_folder(settings.DATA_DIR)).props(
+                    "outline no-caps"
+                )
+                ui.button("Open cache folder", icon="folder_open", on_click=lambda: dialogs.open_folder(cache.CACHE_BASE)).props(
+                    "outline no-caps"
+                )
+
             with ui.row().classes("w-full justify-end gap-2"):
                 ui.button("Cancel", on_click=lambda: ui.navigate.to("/")).props("flat no-caps")
                 ui.button("Save", on_click=save).props("unelevated no-caps color=primary")
@@ -806,20 +820,39 @@ async def _repo_page() -> None:
                 if ref_a is None:
                     ui.label("Newly added — nothing to compare against yet.").style(f"color:{theme.TEXT_SECONDARY}")
                 else:
-                    ui.spinner(size="lg")
+                    progress_bar = ui.linear_progress(value=0, show_value=False).classes("w-full").props("size=28px rounded")
+                    with progress_bar:
+                        with ui.element("div").classes("absolute-full flex flex-center"):
+                            progress_label = ui.label("Starting…").style("color:white; font-size:0.8rem; font-weight:500")
         if ref_a is None:
             return
+        # diff_versions runs in a worker thread; it only writes this dict, and a UI timer reads it.
+        progress = {"fraction": 0.0, "message": "Starting…"}
+
+        def report(fraction: float, message: str) -> None:
+            progress["fraction"], progress["message"] = fraction, message
+
+        def refresh_progress() -> None:
+            if body.is_deleted:
+                return
+            progress_bar.set_value(progress["fraction"])
+            progress_label.set_text(progress["message"] + "…")
+
+        with body:
+            progress_timer = ui.timer(0.2, refresh_progress)
         try:
-            result = await run.io_bound(diffing.diff_versions, repo, session.cache_root, ref_a, path, ref_b, path)
+            result = await run.io_bound(diffing.diff_versions, repo, session.cache_root, ref_a, path, ref_b, path, progress=report)
         except Exception as e:  # noqa: BLE001 - always resolve the spinner, even on an unexpected failure
             if body.is_deleted:
                 return
+            progress_timer.cancel()
             body.clear()
             with body:
                 ui.label(f"Error: {e}").style(f"color:{theme.RED}; font-family:monospace; white-space:pre-wrap")
             return
         if body.is_deleted:
             return  # navigated away (or picked another file) while the diff was computing
+        progress_timer.cancel()
         body.clear()
         with body:
             render_diff_result(result)

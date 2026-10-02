@@ -3,6 +3,7 @@ repository view. Every dialog here is awaitable and returns its result."""
 
 from __future__ import annotations
 
+import os
 import subprocess
 import sys
 from pathlib import Path
@@ -70,6 +71,20 @@ def _osascript_choose(kind: str, prompt: str) -> Path | None:
         return None  # user cancelled
     path = Path(result.stdout.strip())
     return path.resolve() if kind == "folder" else path
+
+
+def open_folder(path: Path) -> None:
+    """Show `path` in the OS file manager (creating it first if it doesn't exist yet)."""
+    path.mkdir(parents=True, exist_ok=True)
+    try:
+        if sys.platform == "darwin":
+            subprocess.Popen(["open", str(path)])
+        elif sys.platform == "win32":
+            os.startfile(str(path))  # type: ignore[attr-defined]
+        else:
+            subprocess.Popen(["xdg-open", str(path)])
+    except OSError as e:
+        show_error("Couldn't open folder", str(e))
 
 
 def default_location() -> Path:

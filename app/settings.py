@@ -22,7 +22,8 @@ from dataclasses import dataclass
 from pathlib import Path
 
 # Next to recent_repos.json, for the same reasons (see recent.py).
-_FILE = Path.home() / ".config" / "arrangement-diff-viewer" / "settings.json"
+DATA_DIR = Path.home() / ".config" / "arrangement-diff-viewer"
+_FILE = DATA_DIR / "settings.json"
 
 _PLATFORM = "win32" if sys.platform == "win32" else "darwin" if sys.platform == "darwin" else "linux"
 

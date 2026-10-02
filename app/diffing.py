@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
 
 import converter21
@@ -19,6 +20,13 @@ converter21.register()
 # How close two touched measures need to be (in measure numbers) to be shown
 # as one excerpt instead of two separate ones.
 _CLUSTER_GAP = 2
+
+
+ProgressFn = Callable[[float, str], None]
+
+
+def _no_progress(fraction: float, message: str) -> None:
+    pass
 
 
 def _measure_ranges(diff_list: list[DiffOperation]) -> list[tuple[int, int]]:
@@ -94,10 +102,12 @@ def _filtered_score(sc: m21.stream.Score, active_names: set[str]) -> m21.stream.
     return filtered
 
 
-def _compute_and_cache(musicxml1: Path, musicxml2: Path, name1: str, name2: str, diff_dir: Path, detail: int) -> DiffResult:
+def _compute_and_cache(musicxml1: Path, musicxml2: Path, name1: str, name2: str, diff_dir: Path, detail: int, progress: ProgressFn = _no_progress) -> DiffResult:
+    progress(0.4, "Parsing scores")
     sc1 = m21.converter.parse(musicxml1, forceSource=True)
     sc2 = m21.converter.parse(musicxml2, forceSource=True)
 
+    progress(0.5, "Comparing notation")
     ann1 = AnnScore(sc1, detail)
     ann2 = AnnScore(sc2, detail)
     diff_list, cost = Comparison.annotated_scores_diff(ann1, ann2)
@@ -107,6 +117,7 @@ def _compute_and_cache(musicxml1: Path, musicxml2: Path, name1: str, name2: str,
     manifest: list[dict] = []
 
     if cost != 0:
+        progress(0.7, "Rendering differences")
         text = Visualization.get_text_output(sc1, sc2, diff_list, score1Name=name1, score2Name=name2)
         ranges = _measure_ranges(diff_list)
         touched = _touched_parts(diff_list)
@@ -119,6 +130,7 @@ def _compute_and_cache(musicxml1: Path, musicxml2: Path, name1: str, name2: str,
         excerpts_dir.mkdir(parents=True, exist_ok=True)
 
         for i, (start, end) in enumerate(ranges):
+            progress(0.7 + 0.3 * i / len(ranges), f"Rendering differences ({i + 1}/{len(ranges)})")
             active_names = _active_part_names(touched, start, end)
             excerpt_sc1 = _filtered_score(sc1, active_names)
             excerpt_sc2 = _filtered_score(sc2, active_names)
@@ -177,15 +189,18 @@ def diff_versions(
     ref2: str,
     path2: str,
     detail: int = DetailLevel.AllObjects,
+    progress: ProgressFn = _no_progress,
 ) -> DiffResult:
     try:
+        progress(0.0, "Converting first version")
         sha1, musicxml1 = cache.ensure_musicxml(repo, cache_root, ref1, path1)
+        progress(0.2, "Converting second version")
         sha2, musicxml2 = cache.ensure_musicxml(repo, cache_root, ref2, path2)
 
         diff_dir = cache.diff_dir_for(cache_root, sha1, sha2, int(detail))
         if cache.diff_is_cached(diff_dir):
             return _load_cached(diff_dir)
 
-        return _compute_and_cache(musicxml1, musicxml2, path1, path2, diff_dir, detail)
+        return _compute_and_cache(musicxml1, musicxml2, path1, path2, diff_dir, detail, progress)
     except Exception as e:  # noqa: BLE001 - surface any conversion/parse/render failure to the UI
         return DiffResult(cost=0, text="", error=str(e))

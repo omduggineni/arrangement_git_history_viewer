@@ -51,7 +51,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.11"
+          python-version: "3.12"
       # python3-gi/webkit2gtk are pywebview's GTK backend on Linux;
       # appimagetool needs curl/file.
       - run: |

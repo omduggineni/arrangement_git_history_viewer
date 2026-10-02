@@ -26,10 +26,10 @@ _HEADER_HEIGHT = 56
 # How often to re-check the working tree, so edits saved from MuseScore (or
 # commits made in a terminal) show up without a manual refresh.
 _POLL_SECONDS = 3.0
-# PyInstaller bundles the icon at the top of sys._MEIPASS (see the spec file).
-_ICON = (
-    Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent / "packaging"  # type: ignore[attr-defined]
-) / "arrangement-diff-viewer.png"
+# PyInstaller bundles the icons at the top of sys._MEIPASS (see the spec file).
+_ICON_DIR = Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent / "packaging"  # type: ignore[attr-defined]
+_ICON = _ICON_DIR / "arrangement-diff-viewer.png"
+_WINDOW_ICON = _ICON_DIR / ("icon-macos.png" if sys.platform == "darwin" else "arrangement-diff-viewer.png")
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -895,7 +895,7 @@ def run_app(argv: list[str] | None = None) -> None:
     # covers `make run`). Windows' backend only loads .ico, and falls back to
     # the icon embedded in the exe, so leave it alone there.
     if sys.platform != "win32":
-        app.native.start_args["icon"] = str(_ICON)
+        app.native.start_args["icon"] = str(_WINDOW_ICON)
     ui.run(
         host=args.host or "127.0.0.1",  # localhost-only by default; this browses a private repo
         port=args.port,

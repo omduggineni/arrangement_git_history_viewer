@@ -40,15 +40,18 @@ COLLECT_ALL_PACKAGES = [
     "h11",
 ]
 
-# App icon, in each platform's native format. arrangement-diff-viewer.png is
-# also bundled for the app to use at runtime (favicon, Linux window icon).
+# App icon, in each platform's native format and shape (see make_icons.py).
+# The PNGs are also bundled for the app to use at runtime (favicon, window and
+# dock icons).
 ICON_PNG = PROJECT_ROOT / "packaging" / "arrangement-diff-viewer.png"
+ICON_MACOS_PNG = PROJECT_ROOT / "packaging" / "icon-macos.png"
 ICON_ICNS = PROJECT_ROOT / "packaging" / "icon.icns"
 ICON_ICO = PROJECT_ROOT / "packaging" / "icon.ico"
 
 datas = [
     (str(GIT_DIR), "git"),  # -> sys._MEIPASS/git, where app/settings.py looks for it
     (str(ICON_PNG), "."),  # -> sys._MEIPASS/arrangement-diff-viewer.png
+    (str(ICON_MACOS_PNG), "."),  # -> sys._MEIPASS/icon-macos.png
 ]
 binaries = []
 hiddenimports = []

@@ -68,11 +68,13 @@ def main() -> None:
 
     mac = macos_icon(art)
     mac.save(HERE / "icon-macos.png")
-    # Pillow's ICNS writer skips the small @1x sizes, so build it with iconutil.
+    # Only 128px and up: given a 16 or 32px image, newer macOS shows it shrunk
+    # onto a grey "legacy icon" tile in list views. Without one, it scales the
+    # larger images down itself and draws them normally.
     with tempfile.TemporaryDirectory() as tmp:
         iconset = Path(tmp) / "icon.iconset"
         iconset.mkdir()
-        for size in (16, 32, 128, 256, 512):
+        for size in (128, 256, 512):
             mac.resize((size, size), Image.LANCZOS).save(iconset / f"icon_{size}x{size}.png")
             mac.resize((size * 2, size * 2), Image.LANCZOS).save(iconset / f"icon_{size}x{size}@2x.png")
         subprocess.run(["iconutil", "-c", "icns", "-o", str(HERE / "icon.icns"), str(iconset)], check=True)

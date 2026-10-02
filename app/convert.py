@@ -1,11 +1,11 @@
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 import threading
 import time
 from pathlib import Path
+
+from app import settings
 
 # .mscz is MuseScore's own proprietary file format (a zipped, version-specific XML
 # schema). There is no maintained pure-Python reader for it, and music21 /
@@ -13,21 +13,9 @@ from pathlib import Path
 # one step in this app that has to shell out to the MuseScore CLI itself. Every
 # other step (diffing, rendering) runs in-process.
 
-_MSCORE_CANDIDATES = [
-    "mscore",
-    "mscore4portable",
-    "musescore",
-    "/Applications/MuseScore 4.app/Contents/MacOS/mscore",
-    "/Applications/MuseScore 4.app/Contents/MacOS/mscore4portable",
-    "/opt/homebrew/bin/mscore",
-    "/usr/bin/mscore",
-]
-
 # MuseScore's CLI behaves like a single-instance GUI app under the hood and is
 # unreliable when invoked concurrently, so conversions are serialized.
 _MSCORE_LOCK = threading.Lock()
-
-_mscore_path_cache: str | None = None
 
 
 class ConversionError(RuntimeError):
@@ -35,27 +23,12 @@ class ConversionError(RuntimeError):
 
 
 def mscore_path() -> str:
-    global _mscore_path_cache
-    if _mscore_path_cache:
-        return _mscore_path_cache
-
-    env_path = os.environ.get("MSCORE_PATH")
-    if env_path and Path(env_path).exists():
-        _mscore_path_cache = env_path
-        return env_path
-
-    for candidate in _MSCORE_CANDIDATES:
-        if candidate.startswith("/"):
-            found = candidate if Path(candidate).exists() else None
-        else:
-            found = shutil.which(candidate)
-        if found:
-            _mscore_path_cache = found
-            return found
-
+    path = settings.path_for(settings.MSCORE)
+    if path:
+        return path
     raise ConversionError(
-        "Could not find a MuseScore CLI binary (mscore). "
-        "Set the MSCORE_PATH environment variable to its full path."
+        "Could not find the MuseScore command-line program (mscore). "
+        "Set its location on the Settings page (the gear icon in the toolbar)."
     )
 
 
@@ -85,12 +58,20 @@ def mscz_to_musicxml(mscz_path: Path, out_musicxml_path: Path, timeout: int = 18
     last_error: ConversionError | None = None
     for attempt in range(retries + 1):
         with _MSCORE_LOCK:
-            proc = subprocess.run(
-                [exe, "-o", str(out_musicxml_path), str(mscz_path)],
-                capture_output=True,
-                timeout=timeout,
-                check=False,
-            )
+            try:
+                proc = subprocess.run(
+                    [exe, "-o", str(out_musicxml_path), str(mscz_path)],
+                    env=settings.child_env(exe),
+                    creationflags=settings.CREATIONFLAGS,
+                    capture_output=True,
+                    timeout=timeout,
+                    check=False,
+                )
+            except OSError as e:  # e.g. a saved path that no longer exists
+                raise ConversionError(
+                    f"Couldn't run MuseScore at {exe}: {e.strerror or e}\n"
+                    "Check its location on the Settings page (the gear icon in the toolbar)."
+                ) from e
         if proc.returncode == 0 and out_musicxml_path.exists():
             return out_musicxml_path
 

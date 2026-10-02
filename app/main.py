@@ -8,7 +8,7 @@ from pathlib import Path
 
 from nicegui import app, background_tasks, run, ui
 
-from app import cache, dialogs, diffing, git_ops, recent, remote_ops, session, theme
+from app import cache, dialogs, diffing, git_ops, recent, remote_ops, session, settings, theme
 from app.models import WORKING_TREE_REF, BranchInfo, CommitInfo, SyncStatus
 
 _CHANGE_STYLE = {  # status -> (letter, color, tooltip)
@@ -26,6 +26,10 @@ _HEADER_HEIGHT = 56
 # How often to re-check the working tree, so edits saved from MuseScore (or
 # commits made in a terminal) show up without a manual refresh.
 _POLL_SECONDS = 3.0
+# PyInstaller bundles the icon at the top of sys._MEIPASS (see the spec file).
+_ICON = (
+    Path(sys._MEIPASS) if getattr(sys, "frozen", False) else Path(__file__).resolve().parent.parent / "packaging"  # type: ignore[attr-defined]
+) / "arrangement-diff-viewer.png"
 
 
 def _parse_args(argv: list[str] | None = None) -> argparse.Namespace:
@@ -116,11 +120,25 @@ async def index() -> None:
 def _welcome_page() -> None:
     with ui.column().classes("w-full items-center").style("padding:64px 16px"):
         with ui.column().classes("gap-6").style("width:100%; max-width:640px"):
-            with ui.column().classes("gap-1"):
-                ui.label("Arrangement Diff Viewer").style(f"color:{theme.TEXT_PRIMARY}; font-size:1.75rem; font-weight:600")
-                ui.label("Track versions of your MuseScore arrangements with git, and see exactly what changed in the notation.").style(
+            with ui.row().classes("w-full items-start no-wrap"):
+                with ui.column().classes("gap-1 flex-grow"):
+                    ui.label("Arrangement Diff Viewer").style(f"color:{theme.TEXT_PRIMARY}; font-size:1.75rem; font-weight:600")
+                    ui.label("Track versions of your MuseScore arrangements with git, and see exactly what changed in the notation.").style(
+                        f"color:{theme.TEXT_SECONDARY}"
+                    )
+                ui.button(icon="settings", on_click=lambda: ui.navigate.to("/settings")).props("flat round").style(
                     f"color:{theme.TEXT_SECONDARY}"
-                )
+                ).tooltip("Settings")
+
+            missing = [tool.name for tool in settings.TOOLS if not settings.is_executable(settings.path_for(tool) or "")]
+            if missing:
+                with ui.row().classes("w-full items-center no-wrap gap-2 cursor-pointer").style(
+                    f"border:1px solid {theme.YELLOW}; border-radius:6px; padding:8px 12px"
+                ).on("click", lambda: ui.navigate.to("/settings")):
+                    ui.icon("warning").style(f"color:{theme.YELLOW}")
+                    ui.label(f"{' and '.join(missing)} couldn't be found. Set {'their locations' if len(missing) > 1 else 'its location'} in Settings.").style(
+                        f"color:{theme.TEXT_PRIMARY}; font-size:0.875rem"
+                    )
 
             with ui.row().classes("w-full gap-3 no-wrap items-stretch"):
                 for icon, title, subtitle, handler in [
@@ -159,6 +177,126 @@ def _recent_row(path: Path) -> None:
             row.delete()
 
         ui.button(icon="close", on_click=forget).props("flat round dense size=sm").style(f"color:{theme.TEXT_MUTED}").tooltip("Remove from list")
+
+
+# --- Settings ---------------------------------------------------------------
+
+
+@ui.page("/settings")
+def settings_page() -> None:
+    _base_page()
+    with ui.column().classes("w-full items-center").style("padding:48px 16px"):
+        with ui.column().classes("gap-6").style("width:100%; max-width:720px"):
+            with ui.row().classes("items-center gap-2 no-wrap"):
+                ui.button(icon="arrow_back", on_click=lambda: ui.navigate.to("/")).props("flat round").style(
+                    f"color:{theme.TEXT_SECONDARY}"
+                ).tooltip("Back")
+                ui.label("Settings").style(f"color:{theme.TEXT_PRIMARY}; font-size:1.75rem; font-weight:600")
+
+            with ui.column().classes("gap-1"):
+                ui.label("EXTERNAL PROGRAMS").style(f"color:{theme.TEXT_MUTED}; font-size:0.75rem; letter-spacing:0.05em")
+                ui.label(
+                    "Git comes with this app, and MuseScore is found automatically. Change one only to use a "
+                    "different copy, or if MuseScore wasn't found."
+                ).style(f"color:{theme.TEXT_SECONDARY}; font-size:0.85rem")
+
+            fields = {tool.key: _tool_setting(tool) for tool in settings.TOOLS}
+
+            def save() -> None:
+                try:
+                    for tool in settings.TOOLS:
+                        settings.save_path(tool, fields[tool.key].value)
+                except OSError as e:
+                    dialogs.show_error("Couldn't save settings", str(e))
+                    return
+                for tool in settings.TOOLS:
+                    fields[tool.key].set_value(settings.path_for(tool) or "")  # also refreshes each source label
+                ui.notify("Settings saved", type="positive")
+
+            with ui.row().classes("w-full justify-end gap-2"):
+                ui.button("Cancel", on_click=lambda: ui.navigate.to("/")).props("flat no-caps")
+                ui.button("Save", on_click=save).props("unelevated no-caps color=primary")
+
+
+def _tool_setting(tool: settings.Tool) -> ui.input:
+    """One external program's row: a path field (prefilled with whatever is
+    in effect now), where that path came from, and a way to test it."""
+    default, default_source = settings.default_path(tool)
+    current, _ = settings.resolve(tool)
+
+    with ui.card().classes("w-full gap-2").style(f"background:{theme.BG_CHROME}; border:1px solid {theme.BORDER}; box-shadow:none"):
+        with ui.row().classes("w-full items-center no-wrap gap-2"):
+            ui.label(tool.name).style(f"color:{theme.TEXT_PRIMARY}; font-weight:600")
+            source_label = ui.label().style("font-size:0.75rem; border-radius:3px; padding:0 6px")
+            ui.space()
+            reset_btn = ui.button("Use default", icon="restart_alt").props("flat no-caps dense size=sm").style(
+                f"color:{theme.ACCENT}"
+            )
+        ui.label(tool.description).style(f"color:{theme.TEXT_SECONDARY}; font-size:0.8rem")
+
+        field = ui.input(value=current or "", placeholder=f"Not found -- choose where {tool.name} is installed").props(
+            "outlined dense"
+        ).classes("w-full font-mono")
+        if dialogs.can_pick_folder():
+
+            async def browse() -> None:
+                existing = Path(field.value).expanduser().parent if field.value else None
+                picked = await dialogs.pick_file(f"Choose the {tool.name} program", existing if existing and existing.is_dir() else None)
+                if picked:
+                    field.set_value(settings.normalize(str(picked), tool))
+
+            with field.add_slot("append"):
+                ui.button(icon="folder_open", on_click=browse).props("flat round dense").tooltip("Browse…")
+
+        with ui.row().classes("w-full items-center no-wrap gap-2"):
+            status_icon = ui.icon("check_circle", size="xs")
+            status_label = ui.label().classes("flex-grow").style("font-size:0.8rem")
+            test_btn = ui.button("Test", icon="play_arrow").props("flat no-caps dense size=sm").style(f"color:{theme.TEXT_SECONDARY}")
+
+    def update(_=None) -> None:
+        value = settings.normalize(field.value or "", tool)
+        is_default = value == (default or "")
+        if is_default:
+            source, color = default_source, theme.TEXT_SECONDARY if default else theme.RED
+        else:
+            source, color = ("custom" if value else "not set"), theme.YELLOW if value else theme.RED
+        source_label.set_text(source)
+        source_label.style(f"color:{color}; border:1px solid {color}")
+        reset_btn.set_visibility(bool(default) and not is_default)
+
+        if not value:
+            ok, message = False, f"{tool.name} is needed for this app to work fully."
+        elif settings.is_executable(value):
+            ok, message = True, "Found. Click Test to check that it runs."
+        else:
+            ok, message = False, "There's no program at this path."
+        status_icon.name = "check_circle" if ok else "error"
+        status_icon.style(f"color:{theme.GREEN if ok else theme.RED}")
+        status_label.set_text(message)
+        status_label.style(f"color:{theme.TEXT_SECONDARY if ok else theme.RED}")
+        test_btn.set_enabled(ok)
+
+    async def test() -> None:
+        value = settings.normalize(field.value or "", tool)
+        test_btn.disable()
+        status_label.set_text("Running…")
+        try:
+            result = await run.io_bound(settings.version, tool, value)
+        except RuntimeError as e:
+            update()
+            status_icon.name = "error"
+            status_icon.style(f"color:{theme.RED}")
+            status_label.set_text(f"Didn't run: {e}")
+            status_label.style(f"color:{theme.RED}")
+            return
+        update()
+        status_label.set_text(f"Works: {result}")
+
+    field.on_value_change(update)
+    reset_btn.on_click(lambda: field.set_value(default or ""))
+    test_btn.on_click(test)
+    update()
+    return field
 
 
 # --- Repository view --------------------------------------------------------
@@ -215,8 +353,11 @@ async def _repo_page() -> None:
         sync_button(sync)
         ui.space()
         ui.button(icon="refresh", on_click=lambda: refresh_all(rerender_selection=True)).props("flat round").style(
-            f"color:{theme.TEXT_SECONDARY}; margin-right:8px"
+            f"color:{theme.TEXT_SECONDARY}"
         ).tooltip("Refresh")
+        ui.button(icon="settings", on_click=lambda: ui.navigate.to("/settings")).props("flat round").style(
+            f"color:{theme.TEXT_SECONDARY}; margin-right:8px"
+        ).tooltip("Settings")
 
     def sync_button(sync: SyncStatus) -> None:
         if state["busy"]:
@@ -750,10 +891,16 @@ def run_app(argv: list[str] | None = None) -> None:
 
     native = not args.web
     dialogs.native = native
+    # Sets the window icon on Linux and the dock icon on macOS (which also
+    # covers `make run`). Windows' backend only loads .ico, and falls back to
+    # the icon embedded in the exe, so leave it alone there.
+    if sys.platform != "win32":
+        app.native.start_args["icon"] = str(_ICON)
     ui.run(
         host=args.host or "127.0.0.1",  # localhost-only by default; this browses a private repo
         port=args.port,
         title="Arrangement Diff Viewer",
+        favicon=_ICON,
         reload=False,
         show=False,
         native=native,

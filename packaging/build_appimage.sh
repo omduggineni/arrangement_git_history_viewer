@@ -32,21 +32,9 @@ Icon=arrangement-diff-viewer
 Categories=Utility;
 EOF
 
-# appimagetool requires an icon file to exist at the AppDir root, matching
-# the .desktop file's Icon= key. Drop a real packaging/arrangement-diff-viewer.png
-# into the repo to replace this 1x1 placeholder.
-if [ -f packaging/arrangement-diff-viewer.png ]; then
-  cp packaging/arrangement-diff-viewer.png "$APPDIR/arrangement-diff-viewer.png"
-else
-  python3 - "$APPDIR/arrangement-diff-viewer.png" <<'PY'
-import base64, sys
-data = base64.b64decode(
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
-)
-with open(sys.argv[1], "wb") as f:
-    f.write(data)
-PY
-fi
+# appimagetool requires an icon file at the AppDir root, matching the
+# .desktop file's Icon= key.
+cp packaging/arrangement-diff-viewer.png "$APPDIR/arrangement-diff-viewer.png"
 
 if [ ! -x appimagetool ]; then
   curl -L -o appimagetool \

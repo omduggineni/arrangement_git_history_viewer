@@ -42,20 +42,34 @@ async def pick_folder(prompt: str, start: Path | None = None) -> Path | None:
         # Web mode on a Mac: the server is still local, so osascript's native
         # "choose folder" dialog works. (This deliberately avoids tkinter,
         # which leaves a stray "tk" window on screen on macOS.)
-        return await run.io_bound(_osascript_choose_folder, prompt)
+        return await run.io_bound(_osascript_choose, "folder", prompt)
     return None
 
 
-def _osascript_choose_folder(prompt: str) -> Path | None:
+async def pick_file(prompt: str, start: Path | None = None) -> Path | None:
+    # Not resolve()d: a symlink like /opt/homebrew/bin/mscore should stay a
+    # symlink, so it keeps working after the thing it points to is upgraded.
+    if native:
+        import webview
+
+        result = await app.native.main_window.create_file_dialog(webview.FileDialog.OPEN, directory=str(start or ""))
+        return Path(result[0]) if result else None
+    if sys.platform == "darwin":
+        return await run.io_bound(_osascript_choose, "file", prompt)
+    return None
+
+
+def _osascript_choose(kind: str, prompt: str) -> Path | None:
     escaped = prompt.replace("\\", "\\\\").replace('"', '\\"')
     result = subprocess.run(
-        ["osascript", "-e", f'POSIX path of (choose folder with prompt "{escaped}")'],
+        ["osascript", "-e", f'POSIX path of (choose {kind} with prompt "{escaped}")'],
         capture_output=True,
         text=True,
     )
     if result.returncode != 0:
         return None  # user cancelled
-    return Path(result.stdout.strip()).resolve()
+    path = Path(result.stdout.strip())
+    return path.resolve() if kind == "folder" else path
 
 
 def default_location() -> Path:

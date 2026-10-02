@@ -1,21 +1,22 @@
 """Network git operations (clone, fetch, push, pull), via the `git` CLI.
 
 This is the one place git access shells out instead of using pygit2. libgit2
-doesn't use git's credential helpers (e.g. the macOS keychain one) or
-`~/.ssh/config`, so doing these in-process would mean reimplementing
-credential prompting ourselves. The `git` binary already knows how to
-authenticate however the user has it set up.
+doesn't use git's credential helpers or `~/.ssh/config`, so doing these
+in-process would mean reimplementing credential prompting ourselves. The `git`
+binary already knows how to authenticate. It's the copy bundled with the app
+by default (which signs in over HTTPS through Git Credential Manager's own
+window), or the user's own git if they choose it in Settings.
 
 These run headless, so anything that would wait for a password or host-key
-prompt is told to fail immediately instead of hanging forever.
+prompt in a terminal is told to fail immediately instead of hanging forever.
 """
 
 from __future__ import annotations
 
-import os
-import shutil
 import subprocess
 from pathlib import Path
+
+from app import settings
 
 
 class RemoteError(RuntimeError):
@@ -25,8 +26,8 @@ class RemoteError(RuntimeError):
 _HINTS = [
     (
         ("could not read Username", "terminal prompts disabled", "Authentication failed"),
-        "This app can't prompt for a password. Sign in once with git in Terminal (or GitHub Desktop) "
-        "so your credentials are saved to the keychain, or use an SSH remote URL.",
+        "Signing in didn't complete. Try again and finish signing in in the window that opens, or use "
+        "an SSH remote URL. To use credentials your own git has already saved, choose that git in Settings.",
     ),
     (
         ("Host key verification failed",),
@@ -49,26 +50,31 @@ _HINTS = [
 
 
 def _git_exe() -> str:
-    return os.environ.get("GIT_PATH") or shutil.which("git") or "/usr/bin/git"
+    return settings.path_for(settings.GIT) or "git"
 
 
 def _run(args: list[str], cwd: Path, timeout: int = 300) -> str:
-    env = dict(os.environ)
+    exe = _git_exe()
+    env = settings.child_env(exe)
     env["GIT_TERMINAL_PROMPT"] = "0"
     env.setdefault("GIT_SSH_COMMAND", "ssh -o BatchMode=yes")
     env["LC_ALL"] = "C"  # stable English messages, so _HINTS can match them
     try:
         result = subprocess.run(
-            [_git_exe(), *args],
+            [exe, *args],
             cwd=str(cwd),
             env=env,
+            creationflags=settings.CREATIONFLAGS,
             stdin=subprocess.DEVNULL,
             capture_output=True,
             text=True,
             timeout=timeout,
         )
     except FileNotFoundError as e:
-        raise RemoteError("The git command-line tool wasn't found. Install it (or set GIT_PATH).") from e
+        raise RemoteError(
+            "The git command-line tool wasn't found. Install it, or set its location on the "
+            "Settings page (the gear icon in the toolbar)."
+        ) from e
     except subprocess.TimeoutExpired as e:
         raise RemoteError(f"git {args[0]} timed out after {timeout}s.") from e
     if result.returncode != 0:

@@ -39,10 +39,17 @@ jobs:
           .venv\Scripts\pip install --upgrade pip
           .venv\Scripts\pip install -e ".[build]"
           .venv\Scripts\python -m PyInstaller packaging/arrangement_diff_viewer.spec --noconfirm --clean
+      # Wrap the exe + _internal folder into a single Setup.exe.
+      - shell: pwsh
+        run: |
+          $iscc = "${env:ProgramFiles(x86)}\Inno Setup 6\ISCC.exe"
+          if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
+          & $iscc /DAppVersion=0.1.0 packaging\installer.iss
+          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: arrangement-diff-viewer-windows
-          path: dist/Arrangement Diff Viewer/
+          name: arrangement-diff-viewer-windows-installer
+          path: dist/installer/Arrangement-Diff-Viewer-Setup.exe
           retention-days: 7
 
   linux:

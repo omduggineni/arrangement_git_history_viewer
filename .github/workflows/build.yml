@@ -12,7 +12,7 @@ jobs:
     defaults:
       run:
         working-directory: cross_platform
-    runs-on: macos-14
+    runs-on: macos-latest
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
@@ -88,7 +88,7 @@ jobs:
           retention-days: 7
 
   swiftui-macos:
-    runs-on: macos-14
+    runs-on: macos-latest
     defaults:
       run:
         working-directory: swiftui

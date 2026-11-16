@@ -75,6 +75,18 @@ def list_score_files(repo: pygit2.Repository) -> list[ScoreFile]:
     return [ScoreFile(path=p, status=s) for p, s in sorted(files.items())]
 
 
+def list_repo_files(repo: pygit2.Repository) -> list[str]:
+    """Every file currently in the working tree (tracked or not, excluding ignored)."""
+    paths: set[str] = set()
+    if not repo.is_empty:
+        paths.update(e.path for e in repo.index)
+    for path, flags in repo.status().items():
+        if flags & pygit2.GIT_STATUS_IGNORED:
+            continue
+        paths.add(path)
+    return sorted(p for p in paths if _exists_in_workdir(repo, p))
+
+
 def log_for_file(repo: pygit2.Repository, path: str, max_count: int = 200) -> list[CommitInfo]:
     """History of commits that changed `path`, newest first.
 

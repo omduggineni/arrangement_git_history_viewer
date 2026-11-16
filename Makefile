@@ -1,43 +1,45 @@
-VENV := .venv
-PYTHON := $(VENV)/bin/python3
-PIP := $(VENV)/bin/pip
-APP_NAME := Arrangement Diff Viewer
+# Top-level build entry point; each version of the app lives in its own directory
+# and keeps its own Makefile.
+#   cross_platform/  Python + pywebview app (macOS, Windows, Linux)
+#   swiftui/         native SwiftUI app (macOS only)
+CROSS := cross_platform
+SWIFTUI := swiftui
 
-.PHONY: help venv git run run-web app clean distclean
+.PHONY: help all cross-platform swiftui run-cross-platform run-swiftui test-swiftui clean distclean
 
 help:
-	@echo "make venv       create .venv and install the project (incl. build deps)"
-	@echo "make git        download the portable git that gets bundled (into vendor/git)"
-	@echo "make run        run the native app window (no --repo: shows a folder picker)"
-	@echo "make run REPO=/path/to/repo   run against a specific repo, still native"
-	@echo "make run-web    run as an ordinary local web server (for development)"
-	@echo "make app        build '$(APP_NAME).app' into dist/ via PyInstaller"
-	@echo "make clean      remove PyInstaller's build/ and dist/ output"
-	@echo "make distclean  clean, plus remove .venv and vendor/"
-
-$(PYTHON):
-	python3 -m venv $(VENV)
-	$(PIP) install --upgrade pip
-	$(PIP) install -e ".[build]"
-
-venv: $(PYTHON)
-
-git: venv
-	$(PYTHON) packaging/fetch_git.py
-
-run: venv git
-	$(PYTHON) -m app.main $(if $(REPO),--repo "$(REPO)")
-
-run-web: venv git
-	$(PYTHON) -m app.main --web $(if $(REPO),--repo "$(REPO)")
-
-app: venv
-	$(PYTHON) -m PyInstaller packaging/arrangement_diff_viewer.spec --noconfirm --clean
+	@echo "make cross-platform       build the cross_platform app for this OS (macOS .app; see cross_platform/Makefile)"
+	@echo "make swiftui              build the SwiftUI .app (macOS only) into swiftui/dist/"
+	@echo "make all                  build both (macOS only)"
+	@echo "make run-cross-platform [REPO=/path]   run the cross_platform app"
+	@echo "make run-swiftui [REPO=/path]          run the SwiftUI app"
+	@echo "make test-swiftui         run the SwiftUI unit tests"
+	@echo "make clean                remove build output from both"
+	@echo "make distclean            clean, plus .venv/ and vendor/ in cross_platform"
 	@echo
-	@echo "Built: dist/$(APP_NAME).app"
+	@echo "Windows/Linux builds of cross_platform run in CI (.github/workflows/build.yml)."
+
+all: cross-platform swiftui
+
+cross-platform:
+	$(MAKE) -C $(CROSS) app
+
+swiftui:
+	$(MAKE) -C $(SWIFTUI) app
+
+run-cross-platform:
+	$(MAKE) -C $(CROSS) run $(if $(REPO),REPO="$(REPO)")
+
+run-swiftui:
+	$(MAKE) -C $(SWIFTUI) run $(if $(REPO),REPO="$(REPO)")
+
+test-swiftui:
+	$(MAKE) -C $(SWIFTUI) test
 
 clean:
-	rm -rf build dist
+	$(MAKE) -C $(CROSS) clean
+	$(MAKE) -C $(SWIFTUI) clean
 
-distclean: clean
-	rm -rf $(VENV) vendor
+distclean:
+	$(MAKE) -C $(CROSS) distclean
+	$(MAKE) -C $(SWIFTUI) clean

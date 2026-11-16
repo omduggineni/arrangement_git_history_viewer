@@ -43,8 +43,9 @@ def _last_meaningful_line(stderr: str) -> str:
     return stderr.strip()[-300:]
 
 
-def mscz_to_musicxml(mscz_path: Path, out_musicxml_path: Path, timeout: int = 180, retries: int = 4) -> Path:
-    """Convert via the MuseScore CLI.
+def mscz_convert(mscz_path: Path, out_musicxml_path: Path, timeout: int = 180, retries: int = 4) -> Path:
+    """Convert via the MuseScore CLI; the output format follows the output
+    file's extension (.musicxml, .pdf, ...).
 
     MuseScore's CLI is a full GUI app under the hood (not a true headless
     tool), and its startup races with its own crash-reporter/single-instance
@@ -86,3 +87,7 @@ def mscz_to_musicxml(mscz_path: Path, out_musicxml_path: Path, timeout: int = 18
 
     assert last_error is not None
     raise last_error
+
+
+mscz_to_musicxml = mscz_convert
+mscz_to_pdf = mscz_convert

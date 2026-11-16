@@ -1,4 +1,4 @@
-# Builds the native app for macOS, Windows, and Linux.
+# Builds the cross_platform app for macOS, Windows, and Linux, and the SwiftUI app for macOS.
 name: build
 
 on:
@@ -8,7 +8,10 @@ on:
   workflow_dispatch:
 
 jobs:
-  macos:
+  cross-platform-macos:
+    defaults:
+      run:
+        working-directory: cross_platform
     runs-on: macos-14
     steps:
       - uses: actions/checkout@v4
@@ -22,11 +25,14 @@ jobs:
           .venv/bin/python -m PyInstaller packaging/arrangement_diff_viewer.spec --noconfirm --clean
       - uses: actions/upload-artifact@v4
         with:
-          name: arrangement-diff-viewer-macos
-          path: dist/Arrangement Diff Viewer.app
+          name: arrangement-diff-viewer-cross-platform-macos
+          path: cross_platform/dist/Arrangement Diff Viewer.app
           retention-days: 7
 
-  windows:
+  cross-platform-windows:
+    defaults:
+      run:
+        working-directory: cross_platform
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v4
@@ -48,11 +54,14 @@ jobs:
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
       - uses: actions/upload-artifact@v4
         with:
-          name: arrangement-diff-viewer-windows-installer
-          path: dist/installer/Arrangement-Diff-Viewer-Setup.exe
+          name: arrangement-diff-viewer-cross-platform-windows-installer
+          path: cross_platform/dist/installer/Arrangement-Diff-Viewer-Setup.exe
           retention-days: 7
 
-  linux:
+  cross-platform-linux:
+    defaults:
+      run:
+        working-directory: cross_platform
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
@@ -74,6 +83,26 @@ jobs:
           bash packaging/build_appimage.sh
       - uses: actions/upload-artifact@v4
         with:
-          name: arrangement-diff-viewer-linux
-          path: dist/Arrangement-Diff-Viewer.AppImage
+          name: arrangement-diff-viewer-cross-platform-linux
+          path: cross_platform/dist/Arrangement-Diff-Viewer.AppImage
+          retention-days: 7
+
+  swiftui-macos:
+    runs-on: macos-14
+    defaults:
+      run:
+        working-directory: swiftui
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      # Freezes the Python diff sidecar, builds the release binary, and bundles the ad-hoc signed .app.
+      - run: make app PYTHON3=python3
+      # upload-artifact drops the executable bit, so ship a zip.
+      - run: ditto -c -k --keepParent "dist/Arrangement Diff Viewer.app" dist/Arrangement-Diff-Viewer-swiftui-macos.zip
+      - uses: actions/upload-artifact@v4
+        with:
+          name: arrangement-diff-viewer-swiftui-macos
+          path: swiftui/dist/Arrangement-Diff-Viewer-swiftui-macos.zip
           retention-days: 7

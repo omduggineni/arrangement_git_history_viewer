@@ -41,6 +41,25 @@ def ensure_musicxml(repo: Path, cache_root: Path, ref: str, path: str) -> tuple[
     return sha, musicxml_path
 
 
+def ensure_pdf(repo: Path, cache_root: Path, ref: str, path: str) -> Path:
+    """A PDF of the score at `ref`, rendered by MuseScore and cached by blob."""
+    sha = git_ops.blob_sha(repo, ref, path)
+    if sha is None:
+        raise FileNotFoundError(f"{path} does not exist at {ref}")
+
+    blobs_dir = cache_root / "blobs"
+    blobs_dir.mkdir(parents=True, exist_ok=True)
+    pdf_path = blobs_dir / f"{sha}.pdf"
+    if pdf_path.exists():
+        return pdf_path
+
+    mscz_path = blobs_dir / f"{sha}{Path(path).suffix or '.mscz'}"
+    if not mscz_path.exists():
+        mscz_path.write_bytes(git_ops.blob_bytes(repo, ref, path))
+    convert.mscz_to_pdf(mscz_path, pdf_path)
+    return pdf_path
+
+
 def diff_dir_for(cache_root: Path, sha1: str, sha2: str, detail: int) -> Path:
     d = cache_root / "diffs" / f"{sha1}__{sha2}__{detail}"
     d.mkdir(parents=True, exist_ok=True)

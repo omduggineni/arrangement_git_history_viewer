@@ -45,6 +45,51 @@ def _commit_subtitle(c: CommitInfo) -> str:
     return f"{c.author} committed on {c.date}"
 
 
+def _open_in_musescore(rel_path: str) -> None:
+    exe = settings.path_for(settings.MSCORE)
+    if not exe:
+        ui.notify("MuseScore not found. Set its path in Settings.", type="warning")
+        return
+    full = str(session.repo_path / rel_path)
+    if not Path(full).exists():
+        ui.notify("That file no longer exists.", type="warning")
+        return
+    bundle = next((p for p in Path(exe).parents if p.suffix == ".app"), None)
+    cmd = ["open", "-a", str(bundle), full] if sys.platform == "darwin" and bundle else [exe, full]
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        dialogs.show_error("Couldn't open MuseScore", str(e))
+
+
+_FILE_MANAGER = {"darwin": "Finder", "win32": "File Explorer"}.get(sys.platform, "file manager")
+
+
+def _reveal_in_file_manager(rel_path: str) -> None:
+    full = session.repo_path / rel_path
+    if not full.exists():
+        ui.notify("That file no longer exists.", type="warning")
+        return
+    if sys.platform == "darwin":
+        cmd = ["open", "-R", str(full)]
+    elif sys.platform == "win32":
+        cmd = ["explorer", f"/select,{full}"]
+    else:  # no portable "select this file" on Linux; open the containing folder
+        cmd = ["xdg-open", str(full.parent)]
+    try:
+        subprocess.Popen(cmd, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL, start_new_session=True)
+    except OSError as e:
+        dialogs.show_error(f"Couldn't open {_FILE_MANAGER}", str(e))
+
+
+def _file_context_menu(rel_path: str) -> None:
+    """Right-click menu for a file row; call inside the row's `with` block."""
+    with ui.context_menu().style(f"background:{theme.BG_CHROME}"):
+        if rel_path.endswith(".mscz"):
+            ui.menu_item("Open in MuseScore", on_click=lambda: _open_in_musescore(rel_path))
+        ui.menu_item(f"Show in {_FILE_MANAGER}", on_click=lambda: _reveal_in_file_manager(rel_path))
+
+
 def _svg_url(path: Path) -> str:
     rel = path.relative_to(cache.CACHE_BASE)
     return "/cache/" + "/".join(rel.parts)
@@ -323,6 +368,9 @@ async def _repo_page() -> None:
         "changed_files": [],
         "excluded": set(),  # changed paths the user unchecked for the next commit
         "commits": [],
+        "files": [],  # every file in the working tree, for the Files tab
+        "collapsed": set(),  # folders the user collapsed in the Files tab
+        "selected_tree_file": None,
         "head": None,  # HEAD commit sha, to notice new commits (from us or elsewhere)
         "sync": git_ops.sync_status(repo),
         "busy": None,  # label of an in-flight network operation, e.g. "Pushing"
@@ -432,7 +480,7 @@ async def _repo_page() -> None:
         tabs_box.clear()
         with tabs_box:
             with ui.row().classes("w-full gap-0").style(f"border-bottom:1px solid {theme.BORDER}"):
-                for mode_key, label in [("changes", "Changes"), ("history", "History")]:
+                for mode_key, label in [("changes", "Changes"), ("files", "Files"), ("history", "History")]:
                     active = state["mode"] == mode_key
                     if mode_key == "changes" and state["changed_files"]:
                         label += f" ({len(state['changed_files'])})"
@@ -449,6 +497,8 @@ async def _repo_page() -> None:
         with list_box:
             if state["mode"] == "changes":
                 render_changes_list()
+            elif state["mode"] == "files":
+                render_files_tree()
             else:
                 render_history_list()
         commit_box.set_visibility(state["mode"] == "changes")
@@ -502,12 +552,68 @@ async def _repo_page() -> None:
                 with ui.row().classes("items-center gap-2 no-wrap flex-grow min-w-0 cursor-pointer py-2 pr-2").on(
                     "click", lambda _, p=f.path: select_changed_file(p)
                 ):
+                    if f.status != "deleted":
+                        _file_context_menu(f.path)
                     ui.label(f.path).classes("text-sm truncate flex-grow").style(
                         f"color:{theme.TEXT_PRIMARY if f.is_score else theme.TEXT_SECONDARY}"
                     )
                     ui.label(letter).classes("text-xs font-bold w-4 text-center").style(
                         f"color:{color}; border:1px solid {color}; border-radius:3px; line-height:14px"
                     ).tooltip(tooltip)
+
+    def render_files_tree() -> None:
+        if not state["files"]:
+            ui.label("No files").classes("text-sm p-4").style(f"color:{theme.TEXT_SECONDARY}")
+            return
+        tree: dict = {}
+        for path in state["files"]:
+            node = tree
+            *dirs, name = path.split("/")
+            for d in dirs:
+                node = node.setdefault(d, {})
+            node[name] = path
+        changed = {f.path: f.status for f in state["changed_files"]}
+
+        def render(node: dict, prefix: str, depth: int) -> None:
+            # folders first, then files, each alphabetical
+            for name in sorted(node, key=lambda n: (not isinstance(node[n], dict), n.lower())):
+                child = node[name]
+                pad = f"padding-left:{8 + depth * 16}px"
+                if isinstance(child, dict):
+                    key = prefix + name
+                    closed = key in state["collapsed"]
+
+                    def toggle_folder(_, k=key) -> None:
+                        state["collapsed"] ^= {k}
+                        render_left()
+
+                    with ui.row().classes("items-center w-full no-wrap gap-1 cursor-pointer py-1 pr-2").style(pad).on("click", toggle_folder):
+                        ui.icon("chevron_right" if closed else "expand_more", size="sm").style(f"color:{theme.TEXT_MUTED}")
+                        ui.icon("folder", size="xs").style(f"color:{theme.TEXT_SECONDARY}")
+                        ui.label(name).classes("text-sm truncate").style(f"color:{theme.TEXT_PRIMARY}")
+                    if not closed:
+                        render(child, key + "/", depth + 1)
+                else:
+                    is_score = child.endswith(".mscz")
+                    status = changed.get(child)
+                    with ui.row().classes("items-center w-full no-wrap gap-1 cursor-pointer py-1 pr-2").style(
+                        f"{pad}; background:{_bg(state['selected_tree_file'] == child)}"
+                    ).on("click", lambda _, p=child: select_tree_file(p)):
+                        _file_context_menu(child)
+                        ui.element("span").style("width:20px; flex:none")
+                        ui.icon("music_note" if is_score else "description", size="xs").style(
+                            f"color:{theme.ACCENT if is_score else theme.TEXT_MUTED}"
+                        )
+                        ui.label(name).classes("text-sm truncate flex-grow").style(
+                            f"color:{theme.TEXT_PRIMARY if is_score else theme.TEXT_SECONDARY}"
+                        )
+                        if status:
+                            letter, color, tooltip = _CHANGE_STYLE[status]
+                            ui.label(letter).classes("text-xs font-bold w-4 text-center").style(
+                                f"color:{color}; border:1px solid {color}; border-radius:3px; line-height:14px"
+                            ).tooltip(tooltip)
+
+        render(tree, "", 0)
 
     def render_history_list() -> None:
         if not state["commits"]:
@@ -573,12 +679,20 @@ async def _repo_page() -> None:
             state["commits"] = []  # reloaded lazily, next time History is shown
             if state["mode"] == "history":
                 background_tasks.create(load_commits())
-        if changes_changed or force:
+        if state["mode"] == "files" and (changes_changed or head_changed or force):
+            background_tasks.create(load_files())
+        elif changes_changed or force:
             render_left()
 
     async def load_commits() -> None:
         state["commits"] = await run.io_bound(git_ops.list_all_commits, repo)
         if state["mode"] == "history":
+            render_left()
+
+    async def load_files() -> None:
+        files = await run.io_bound(git_ops.list_repo_files, repo)
+        if state["mode"] == "files":
+            state["files"] = files
             render_left()
 
     polling = {"active": False}
@@ -737,6 +851,7 @@ async def _repo_page() -> None:
 
     async def switch_mode(mode: str) -> None:
         state["mode"] = mode
+        state["selected_tree_file"] = None
         state["selected_file"] = None
         state["selected_commit"] = None
         state["selected_commit_file"] = None
@@ -745,6 +860,36 @@ async def _repo_page() -> None:
         right_col.clear()
         if mode == "history" and not state["commits"]:
             await load_commits()
+        elif mode == "files":
+            await load_files()
+
+    async def select_tree_file(path: str) -> None:
+        state["selected_tree_file"] = path
+        render_left()
+        right_col.clear()
+        with right_col:
+            ui.label(path).style(f"color:{theme.TEXT_PRIMARY}; font-size:1.125rem; font-weight:600")
+            if not path.endswith(".mscz"):
+                ui.label("Only .mscz scores can be previewed.").style(f"color:{theme.TEXT_SECONDARY}")
+                return
+            with ui.row().classes("items-center gap-2"):
+                spinner = ui.spinner(size="sm")
+                ui.label("Rendering with MuseScore…").style(f"color:{theme.TEXT_SECONDARY}")
+        try:
+            pdf = await run.io_bound(cache.ensure_pdf, repo, session.cache_root, WORKING_TREE_REF, path)
+        except Exception as e:  # noqa: BLE001
+            if state["selected_tree_file"] == path:
+                spinner.delete()
+                dialogs.show_error("Couldn't render score", str(e))
+            return
+        if state["mode"] != "files" or state["selected_tree_file"] != path:
+            return  # user moved on while MuseScore was working
+        right_col.clear()
+        with right_col:
+            ui.label(path).style(f"color:{theme.TEXT_PRIMARY}; font-size:1.125rem; font-weight:600")
+            ui.element("iframe").props(f'src="{_svg_url(pdf)}"').style(
+                f"width:100%; flex:1 1 auto; min-height:0; border:1px solid {theme.BORDER}; border-radius:6px; background:#fff"
+            )
 
     async def select_changed_file(path: str) -> None:
         state["selected_file"] = path

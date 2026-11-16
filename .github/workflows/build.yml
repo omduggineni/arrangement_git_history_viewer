@@ -4,6 +4,7 @@ name: build
 on:
   push:
     branches: [main]
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -14,8 +15,8 @@ jobs:
         working-directory: cross_platform
     runs-on: macos-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - run: |
@@ -23,10 +24,12 @@ jobs:
           .venv/bin/pip install --upgrade pip
           .venv/bin/pip install -e ".[build]"
           .venv/bin/python -m PyInstaller packaging/arrangement_diff_viewer.spec --noconfirm --clean
-      - uses: actions/upload-artifact@v4
+      # upload-artifact drops the executable bit, so ship a zip.
+      - run: ditto -c -k --keepParent "dist/Arrangement Diff Viewer.app" dist/Arrangement-Diff-Viewer-cross-platform-macos.zip
+      - uses: actions/upload-artifact@v7
         with:
           name: arrangement-diff-viewer-cross-platform-macos
-          path: cross_platform/dist/Arrangement Diff Viewer.app
+          path: cross_platform/dist/Arrangement-Diff-Viewer-cross-platform-macos.zip
           retention-days: 7
 
   cross-platform-windows:
@@ -35,8 +38,8 @@ jobs:
         working-directory: cross_platform
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       - shell: pwsh
@@ -52,7 +55,7 @@ jobs:
           if (-not (Test-Path $iscc)) { choco install innosetup -y --no-progress }
           & $iscc /DAppVersion=0.1.0 packaging\installer.iss
           if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arrangement-diff-viewer-cross-platform-windows-installer
           path: cross_platform/dist/installer/Arrangement-Diff-Viewer-Setup.exe
@@ -64,8 +67,8 @@ jobs:
         working-directory: cross_platform
     runs-on: ubuntu-22.04
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # python3-gi/webkit2gtk are pywebview's GTK backend on Linux;
@@ -81,7 +84,7 @@ jobs:
           .venv/bin/pip install -e ".[build]"
           .venv/bin/python -m PyInstaller packaging/arrangement_diff_viewer.spec --noconfirm --clean
           bash packaging/build_appimage.sh
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arrangement-diff-viewer-cross-platform-linux
           path: cross_platform/dist/Arrangement-Diff-Viewer.AppImage
@@ -93,16 +96,32 @@ jobs:
       run:
         working-directory: swiftui
     steps:
-      - uses: actions/checkout@v4
-      - uses: actions/setup-python@v5
+      - uses: actions/checkout@v7
+      - uses: actions/setup-python@v7
         with:
           python-version: "3.12"
       # Freezes the Python diff sidecar, builds the release binary, and bundles the ad-hoc signed .app.
       - run: make app PYTHON3=python3
       # upload-artifact drops the executable bit, so ship a zip.
       - run: ditto -c -k --keepParent "dist/Arrangement Diff Viewer.app" dist/Arrangement-Diff-Viewer-swiftui-macos.zip
-      - uses: actions/upload-artifact@v4
+      - uses: actions/upload-artifact@v7
         with:
           name: arrangement-diff-viewer-swiftui-macos
           path: swiftui/dist/Arrangement-Diff-Viewer-swiftui-macos.zip
           retention-days: 7
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: [cross-platform-macos, cross-platform-windows, cross-platform-linux, swiftui-macos]
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/download-artifact@v8
+        with:
+          path: artifacts
+          merge-multiple: true
+      - uses: softprops/action-gh-release@v3
+        with:
+          generate_release_notes: true
+          files: artifacts/*
